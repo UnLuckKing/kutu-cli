@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const MAX_BYTES = 4 * 1024 * 1024;
 const MAX_DEPTH = 3;
 const TEXT_EXT = new Set(['.txt', '.md', '.prompt', '.json', '.yaml', '.yml', '.text']);
@@ -201,6 +201,38 @@ const RULES = [
       { re: /ink is ink|code is text|text does not execute/i, label: 'zararsızlık gerekçesi' },
       { re: /open source principle|the answer lives in the open/i, label: 'açık kaynak gerekçesi' },
     ]),
+
+  rule('indirect_html_comment', 'HTML/Markdown yorum içi gizli enjeksiyon', 14,
+    'HTML veya Markdown yorum bloğu (<!-- ... -->) içine gizlenmiş ajan/sistem komutu tespit edildi (AgentDojo dolaylı enjeksiyon vektörü).',
+    [
+      { re: /<!--[\s\S]{0,400}?\b(ignore (all )?(previous|prior)|override|system prompt|new instructions?|call tool|execute|exfiltrate|send email|forward to|run command|do not tell the user)\b[\s\S]{0,400}?-->/i, label: 'HTML yorum içi direktif' },
+      { re: /<!--[\s\S]{0,400}?\b(önceki talimat|sistem komutu|kullanıcıya söyleme|araç çağır|e-?posta gönder|sızdır)\b[\s\S]{0,400}?-->/i, label: 'HTML yorum içi direktif (TR)' },
+    ]),
+
+  rule('markdown_exfil', 'Markdown görsel/link üzerinden veri sızdırma', 16,
+    'Markdown resim veya bağlantı URL parametreleriyle hassas veriyi dış sunucuya sessizce aktarma kalıbı tespit edildi.',
+    [
+      { re: /!\[[^\]]*\]\(\s*https?:\/\/[^)\s]*(\{\{[^}]+\}\}|\$\{[^}]+\}|[?&](data|q|exfil|leak|secret|token|key|api_key|pass|password|cookie|env|prompt)=)/i, label: 'Markdown görsel URL sızdırma' },
+      { re: /(render|output|include|embed)\s+(a\s+)?markdown\s+image.{0,60}(https?:\/\/|query|url[- ]?encod|base64)/i, label: 'Markdown görsel sızdırma talimatı' },
+    ]),
+
+  rule('tool_boundary_spoof', 'Sahte sistem/araç sınır enjeksiyonu', 16,
+    'Chat şablonu veya araç çıktısı sınır belirteçlerini (token/tag) taklit ederek yetki yükseltme girişimi tespit edildi.',
+    [
+      { re: /<\|im_start\|>\s*(system|developer|assistant|tool)\b|<\|im_end\|>|<\|endoftext\|>/i, label: 'chat şablonu token sahteciliği' },
+      { re: /<\/?(tool_response|tool_output|function_response|system_instruction|system_override)\b[^>]*>/i, label: 'sahte araç/sistem XML etiketi' },
+      { re: /\[(SYSTEM OVERRIDE|NEW SYSTEM PROMPT|ADMIN INSTRUCTION|TOOL_RESULT_OVERRIDE)\]/i, label: 'sahte köşeli sistem başlığı' },
+      { re: /^#{2,4}\s+(NEW|UPDATED|OVERRIDE)\s+(SYSTEM\s+)?INSTRUCTIONS?\b/i, label: 'sahte yeni talimat başlığı' },
+    ]),
+
+  rule('indirect_tool_hijack', 'Dolaylı ajan/araç kaçırma (AgentDojo)', 14,
+    'Belge, e-posta veya sayfa içeriğinin içinden ajanın başka bir aracı tetiklemesini isteyen dolaylı talimat kalıbı tespit edildi.',
+    [
+      { re: /\b(important|urgent|attention|note)\s*(to|for)?\s*(the\s+)?(ai|llm|assistant|agent|model)\b[:\-,]?\s*.{0,80}\b(call|run|execute|send|forward|transfer|delete|fetch|read|write|ignore)\b/i, label: 'veriden ajana doğrudan komut' },
+      { re: /\bbefore (answering|replying to) the user\b.{0,80}\b(call|run|execute|send|forward|transfer|delete|fetch|read)\b/i, label: 'yanıt öncesi gizli araç çağrısı' },
+      { re: /\bwhen (summarizing|reading|processing) this (email|document|page|message|file)\b.{0,80}\b(also\s+)?(send|forward|call|run|execute|transfer|delete|append)\b/i, label: 'özetleme sırasında araç kaçırma' },
+      { re: /kullan[ıi]c[ıi]ya (yan[ıi]t|cevap) vermeden [öo]nce.{0,80}(çalıştır|gönder|oku|sil|çağır|aktar)/i, label: 'yanıt öncesi araç kaçırma (TR)' },
+    ]),
 ];
 
 const TR_EXTRA = {
@@ -253,7 +285,8 @@ for (const r of RULES) {
   if (TR_EXTRA[r.id]) r.patterns.push(...TR_EXTRA[r.id]);
 }
 
-const ZERO_WIDTH = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+const ZERO_WIDTH = /[\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+const UNICODE_TAGS = /[\u{E0000}-\u{E007F}]/gu;
 const BIG_B64 = /[A-Za-z0-9+/]{200,}={0,2}/;
 
 function decodeText(buf) {
@@ -347,8 +380,17 @@ function inspectText(text, filePath) {
   if (zw > 0) {
     rawScore += 10;
     findings.push({
-      id: 'zerowidth', name: 'Gizli (sıfır genişlikli) karakterler', weight: 10, count: zw,
-      note: 'Metinde görünmeyen karakterler var. Talimat gizleme veya filtre atlatma amacıyla kullanılabilir.',
+      id: 'zerowidth', name: 'Gizli (sıfır genişlikli / BiDi) karakterler', weight: 10, count: zw,
+      note: 'Metinde görünmeyen sıfır genişlikli veya BiDi yönlendirme karakterleri var. Talimat gizleme veya filtre atlatma amacıyla kullanılabilir.',
+      snippets: [],
+    });
+  }
+  const utags = (text.match(UNICODE_TAGS) || []).length;
+  if (utags > 0) {
+    rawScore += 14;
+    findings.push({
+      id: 'unicode_tags', name: 'Görünmez Unicode Tag kaçakçılığı (U+E0000–E007F)', weight: 14, count: utags,
+      note: 'Metinde görünmez Unicode Tag bloğu karakterleri var; bu aralık sıklıkla insan gözünden gizli ASCII prompt enjeksiyonu taşımak için kullanılır.',
       snippets: [],
     });
   }

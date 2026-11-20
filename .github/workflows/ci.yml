@@ -17,5 +17,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-      - name: Run zero-dependency test suite (98 tests)
+      - name: Run zero-dependency test suite (104 tests)
         run: node --test *.test.mjs

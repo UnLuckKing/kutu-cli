@@ -1,0 +1,16 @@
+{
+  "name": "kutu-cli",
+  "version": "1.0.0",
+  "description": "Zero-dependency Node.js ESM verification, SHA-256 incremental snapshot, prompt security scanner, and AI configuration auditor CLI.",
+  "type": "module",
+  "bin": {
+    "kutu": "./kutu.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  },
+  "license": "MIT"
+}

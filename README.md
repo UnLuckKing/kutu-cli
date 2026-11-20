@@ -1,5 +1,10 @@
 # kutu-cli
 
+[![CI](https://github.com/UnLuckKing/kutu-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/UnLuckKing/kutu-cli/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Node >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)
+![Zero Dependencies](https://img.shields.io/badge/dependencies-0-success.svg)
+
 Zero-dependency Node.js (`>=20`, pure ESM) CLI toolkit for **cryptographic backup verification**, **prompt-risk auditing**, **AI provider configuration health**, and **workspace drift detection**.
 
 ## Key Capabilities
